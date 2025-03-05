@@ -231,16 +231,9 @@ class BrowserDayZ {
                 }
             }
             
-            // Edge scrolling for camera look
+            // Edge scrolling for camera look only (not body rotation)
             const edgeThreshold = 0.15;
             const lookSpeed = 0.05;
-            
-            // Look left/right when mouse is near screen edges
-            if (this.inputController.mouse.x > 1 - edgeThreshold) {
-                this.player.rotation -= lookSpeed;
-            } else if (this.inputController.mouse.x < -1 + edgeThreshold) {
-                this.player.rotation += lookSpeed;
-            }
             
             // Look up/down when mouse is near top/bottom edges
             if (this.inputController.mouse.y > 1 - edgeThreshold) {
@@ -249,8 +242,12 @@ class BrowserDayZ {
                 this.camera.rotation.x = Math.min(this.camera.rotation.x + lookSpeed, Math.PI/4);
             }
             
-            // Update camera direction
-            this.cameraContainer.rotation.y = this.player.rotation;
+            // Look left/right by rotating the camera relative to the player's facing direction
+            if (this.inputController.mouse.x > 1 - edgeThreshold) {
+                this.camera.rotation.y = Math.min(this.camera.rotation.y + lookSpeed, Math.PI/4);
+            } else if (this.inputController.mouse.x < -1 + edgeThreshold) {
+                this.camera.rotation.y = Math.max(this.camera.rotation.y - lookSpeed, -Math.PI/4);
+            }
         });
         
         document.addEventListener('mousedown', (event) => {
@@ -922,6 +919,9 @@ class BrowserDayZ {
         // Set the camera to follow the player
         this.cameraContainer.position.copy(this.player.position);
         
+        // Ensure camera rotation reset
+        this.camera.rotation.set(0, 0, 0);
+        
         // Reset player stats
         this.player.health = 100;
         this.player.hunger = 100;
@@ -1030,7 +1030,10 @@ class BrowserDayZ {
                 
                 // Update player rotation to face movement direction
                 this.player.rotation = Math.atan2(directionX, directionZ);
+                
+                // Update both player model and camera container rotation
                 this.cameraContainer.rotation.y = this.player.rotation;
+                this.playerMesh.rotation.y = this.player.rotation;
                 
                 // Check collision before moving
                 if (!this.checkCollision(newX, this.player.position.y, newZ)) {
