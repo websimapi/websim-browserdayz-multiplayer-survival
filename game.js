@@ -123,7 +123,8 @@ class BrowserDayZ {
             0.1,
             1000
         );
-        this.camera.position.set(0, 5, 5);
+        // Position camera at eye level for first-person
+        this.camera.position.set(0, 1.7, 0);
         this.cameraContainer = new THREE.Object3D();
         this.cameraContainer.add(this.camera);
         this.scene.add(this.cameraContainer);
@@ -204,11 +205,25 @@ class BrowserDayZ {
             this.inputController.keys[event.code] = false;
         });
         
-        // Mouse input
+        // Mouse input for first-person view
         document.addEventListener('mousemove', (event) => {
             if (this.gameState.isPaused) return;
             
-            // Store mouse position for look direction
+            // Calculate mouse movement
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+            
+            // Update player rotation (horizontal look)
+            this.player.rotation -= movementX * 0.002;
+            this.cameraContainer.rotation.y = this.player.rotation;
+            
+            // Update camera pitch (vertical look), with limits to prevent flipping
+            this.camera.rotation.x = Math.max(
+                Math.min(this.camera.rotation.x + movementY * 0.002, Math.PI/2 - 0.1), 
+                -Math.PI/2 + 0.1
+            );
+            
+            // Store mouse position for other interactions
             this.inputController.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             this.inputController.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
             
@@ -230,27 +245,6 @@ class BrowserDayZ {
                     }
                 }
             }
-            
-            // Edge scrolling for camera look
-            const edgeThreshold = 0.15;
-            const lookSpeed = 0.05;
-            
-            // Look left/right when mouse is near screen edges
-            if (this.inputController.mouse.x > 1 - edgeThreshold) {
-                this.player.rotation -= lookSpeed;
-            } else if (this.inputController.mouse.x < -1 + edgeThreshold) {
-                this.player.rotation += lookSpeed;
-            }
-            
-            // Look up/down when mouse is near top/bottom edges
-            if (this.inputController.mouse.y > 1 - edgeThreshold) {
-                this.camera.rotation.x = Math.max(this.camera.rotation.x - lookSpeed, -Math.PI/4);
-            } else if (this.inputController.mouse.y < -1 + edgeThreshold) {
-                this.camera.rotation.x = Math.min(this.camera.rotation.x + lookSpeed, Math.PI/4);
-            }
-            
-            // Update camera direction
-            this.cameraContainer.rotation.y = this.player.rotation;
         });
         
         document.addEventListener('mousedown', (event) => {
@@ -912,9 +906,10 @@ class BrowserDayZ {
         const spawnPosition = this.getRandomPositionInWorld();
         this.player.position.set(spawnPosition.x, 1, spawnPosition.z);
         
-        // Create player mesh
+        // Create player mesh - use invisible mesh for first-person view
         this.playerMesh = new THREE.Mesh(this.geometries.player, this.materials.player);
         this.playerMesh.position.copy(this.player.position);
+        this.playerMesh.visible = false; // Hide player mesh in first-person
         this.playerMesh.castShadow = true;
         this.playerMesh.receiveShadow = true;
         this.scene.add(this.playerMesh);
@@ -1000,6 +995,11 @@ class BrowserDayZ {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+        
+        // Request pointer lock for first-person controls
+        if (!this.gameState.isPaused && this.gameState.isPlaying) {
+            this.renderer.domElement.requestPointerLock();
+        }
     }
 
     handlePlayerMovement(deltaTime) {
@@ -1028,9 +1028,8 @@ class BrowserDayZ {
                 const newX = this.player.position.x + moveX;
                 const newZ = this.player.position.z + moveZ;
                 
-                // Update player rotation to face movement direction
-                this.player.rotation = Math.atan2(directionX, directionZ);
-                this.cameraContainer.rotation.y = this.player.rotation;
+                // Don't update player rotation when moving to preserve first-person view direction
+                // this.player.rotation = Math.atan2(directionX, directionZ);
                 
                 // Check collision before moving
                 if (!this.checkCollision(newX, this.player.position.y, newZ)) {
@@ -1612,6 +1611,11 @@ class BrowserDayZ {
         const deltaTime = Math.min(this.clock.getDelta(), 0.1);
         
         if (!this.gameState.isPaused) {
+            // Request pointer lock if not locked for first-person controls
+            if (document.pointerLockElement !== this.renderer.domElement) {
+                this.renderer.domElement.requestPointerLock();
+            }
+            
             // Update movement countdown
             this.updateMoveCountdown(deltaTime);
             
