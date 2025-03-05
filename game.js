@@ -56,7 +56,9 @@ class BrowserDayZ {
             mouse: {
                 x: 0,
                 y: 0,
-                isDown: false
+                isDown: false,
+                isDragging: false,
+                movementTarget: null
             }
         };
         this.multiplayer = null; // WebsimSocket will be initialized in setup
@@ -203,22 +205,40 @@ class BrowserDayZ {
         document.addEventListener('mousemove', (event) => {
             if (this.gameState.isPaused) return;
             
+            // Store mouse position for look direction
             this.inputController.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             this.inputController.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
             
-            // Mouse look - horizontal rotation
-            const sensitivity = 0.003;
-            if (this.inputController.mouse.isDown) {
-                this.player.rotation -= event.movementX * sensitivity;
-                this.cameraContainer.rotation.y = this.player.rotation;
+            // Edge scrolling for camera look
+            const edgeThreshold = 0.15;
+            const lookSpeed = 0.05;
+            
+            // Look left/right when mouse is near screen edges
+            if (this.inputController.mouse.x > 1 - edgeThreshold) {
+                this.player.rotation -= lookSpeed;
+            } else if (this.inputController.mouse.x < -1 + edgeThreshold) {
+                this.player.rotation += lookSpeed;
             }
+            
+            // Look up/down when mouse is near top/bottom edges
+            if (this.inputController.mouse.y > 1 - edgeThreshold) {
+                this.camera.rotation.x = Math.max(this.camera.rotation.x - lookSpeed, -Math.PI/4);
+            } else if (this.inputController.mouse.y < -1 + edgeThreshold) {
+                this.camera.rotation.x = Math.min(this.camera.rotation.x + lookSpeed, Math.PI/4);
+            }
+            
+            // Update camera direction
+            this.cameraContainer.rotation.y = this.player.rotation;
         });
         
         document.addEventListener('mousedown', (event) => {
             if (this.gameState.isPaused) return;
             
             if (event.button === 0) { // Left click
+                // Toggle movement mode
                 this.inputController.mouse.isDown = true;
+                this.inputController.mouse.isDragging = true;
+                this.inputController.mouse.movementTarget = this.getMouseWorldPosition();
                 this.handlePlayerAction();
             }
         });
@@ -226,13 +246,15 @@ class BrowserDayZ {
         document.addEventListener('mouseup', (event) => {
             if (event.button === 0) { // Left click
                 this.inputController.mouse.isDown = false;
+                this.inputController.mouse.isDragging = false;
             }
         });
         
         // Pointer lock for better FPS control
         this.renderer.domElement.addEventListener('click', () => {
             if (!this.gameState.isPaused) {
-                this.renderer.domElement.requestPointerLock();
+                // We don't use pointer lock anymore since we want to see the cursor
+                // this.renderer.domElement.requestPointerLock();
             }
         });
     }
@@ -918,52 +940,54 @@ class BrowserDayZ {
         if (this.gameState.isPaused) return;
         
         const moveSpeed = this.player.isRunning ? 5 : 2.5;
-        let moveX = 0;
-        let moveZ = 0;
+        let isMoving = false;
         
-        // Determine movement direction based on keys
-        if (this.inputController.keys['KeyW']) moveZ -= 1;
-        if (this.inputController.keys['KeyS']) moveZ += 1;
-        if (this.inputController.keys['KeyA']) moveX -= 1;
-        if (this.inputController.keys['KeyD']) moveX += 1;
+        // Movement based on focus (mouse click)
+        if (this.inputController.mouse.isDragging && this.inputController.mouse.movementTarget) {
+            // Calculate direction to target
+            const target = this.inputController.mouse.movementTarget;
+            const directionX = target.x - this.player.position.x;
+            const directionZ = target.z - this.player.position.z;
+            const distance = Math.sqrt(directionX * directionX + directionZ * directionZ);
+            
+            // Move if not already at target (within a small threshold)
+            if (distance > 0.5) {
+                isMoving = true;
+                
+                // Normalize direction and apply speed
+                const moveX = (directionX / distance) * moveSpeed * deltaTime;
+                const moveZ = (directionZ / distance) * moveSpeed * deltaTime;
+                
+                // Calculate final position
+                const newX = this.player.position.x + moveX;
+                const newZ = this.player.position.z + moveZ;
+                
+                // Update player rotation to face movement direction
+                this.player.rotation = Math.atan2(directionX, directionZ);
+                this.cameraContainer.rotation.y = this.player.rotation;
+                
+                // Check collision before moving
+                if (!this.checkCollision(newX, this.player.position.y, newZ)) {
+                    this.player.position.x = newX;
+                    this.player.position.z = newZ;
+                    
+                    // Update camera and player mesh position
+                    this.cameraContainer.position.x = this.player.position.x;
+                    this.cameraContainer.position.z = this.player.position.z;
+                    this.playerMesh.position.copy(this.player.position);
+                }
+            } else {
+                // We've reached the target, stop moving
+                this.inputController.mouse.isDragging = false;
+            }
+        }
         
-        // Check if player is trying to move
-        const isMoving = moveX !== 0 || moveZ !== 0;
-        
-        // Toggle running with Shift
+        // Toggle running with Shift key
         this.player.isRunning = this.inputController.keys['ShiftLeft'] && isMoving && this.player.stamina > 0;
         
-        if (isMoving) {
-            // Normalize movement vector for consistent speed in all directions
-            const length = Math.sqrt(moveX * moveX + moveZ * moveZ);
-            moveX /= length;
-            moveZ /= length;
-            
-            // Apply player rotation to movement direction
-            const rotatedMoveX = moveX * Math.cos(this.player.rotation) + moveZ * Math.sin(this.player.rotation);
-            const rotatedMoveZ = moveZ * Math.cos(this.player.rotation) - moveX * Math.sin(this.player.rotation);
-            
-            // Calculate final position
-            const finalSpeed = moveSpeed * deltaTime;
-            const newX = this.player.position.x + rotatedMoveX * finalSpeed;
-            const newZ = this.player.position.z + rotatedMoveZ * finalSpeed;
-            
-            // Check collision before moving
-            if (!this.checkCollision(newX, this.player.position.y, newZ)) {
-                this.player.position.x = newX;
-                this.player.position.z = newZ;
-                
-                // Update camera and player mesh position
-                this.cameraContainer.position.x = this.player.position.x;
-                this.cameraContainer.position.z = this.player.position.z;
-                this.playerMesh.position.copy(this.player.position);
-            }
-            
-            // Update stamina if running
-            if (this.player.isRunning) {
-                this.player.stamina -= 10 * deltaTime;
-                this.player.stamina = Math.max(0, this.player.stamina);
-            }
+        if (isMoving && this.player.isRunning) {
+            this.player.stamina -= 10 * deltaTime;
+            this.player.stamina = Math.max(0, this.player.stamina);
         }
         
         // Regenerate stamina when not running
@@ -1467,6 +1491,19 @@ class BrowserDayZ {
         window.dispatchEvent(event);
     }
 
+    getMouseWorldPosition() {
+        // Create a ray from the camera through the mouse position
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(this.inputController.mouse.x, this.inputController.mouse.y), this.camera);
+        
+        // Calculate intersection with the ground plane
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const target = new THREE.Vector3();
+        raycaster.ray.intersectPlane(groundPlane, target);
+        
+        return target;
+    }
+
     animate() {
         requestAnimationFrame(this.animate.bind(this));
         
@@ -1503,4 +1540,3 @@ window.addEventListener('DOMContentLoaded', () => {
     window.game = game;
     game.init();
 });
-
