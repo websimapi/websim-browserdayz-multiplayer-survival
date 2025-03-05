@@ -58,7 +58,10 @@ class BrowserDayZ {
                 y: 0,
                 isDown: false,
                 isDragging: false,
-                movementTarget: null
+                movementTarget: null,
+                moveClickStart: null,
+                moveClickPosition: null,
+                moveCountdown: 0
             }
         };
         this.multiplayer = null; // WebsimSocket will be initialized in setup
@@ -209,6 +212,25 @@ class BrowserDayZ {
             this.inputController.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             this.inputController.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
             
+            // Reset movement countdown if mouse has moved during countdown
+            if (this.inputController.mouse.moveCountdown > 0) {
+                const mousePos = { x: event.clientX, y: event.clientY };
+                const clickPos = this.inputController.mouse.moveClickPosition;
+                
+                // Check if mouse has moved significantly from the click position
+                if (clickPos && Math.abs(mousePos.x - clickPos.x) > 5 || Math.abs(mousePos.y - clickPos.y) > 5) {
+                    this.inputController.mouse.moveCountdown = 0;
+                    this.inputController.mouse.moveClickStart = null;
+                    this.inputController.mouse.moveClickPosition = null;
+                    
+                    // Remove countdown indicator if it exists
+                    const indicator = document.getElementById('move-countdown-indicator');
+                    if (indicator) {
+                        document.body.removeChild(indicator);
+                    }
+                }
+            }
+            
             // Edge scrolling for camera look
             const edgeThreshold = 0.15;
             const lookSpeed = 0.05;
@@ -235,18 +257,36 @@ class BrowserDayZ {
             if (this.gameState.isPaused) return;
             
             if (event.button === 0) { // Left click
-                // Toggle movement mode
-                this.inputController.mouse.isDown = true;
-                this.inputController.mouse.isDragging = true;
-                this.inputController.mouse.movementTarget = this.getMouseWorldPosition();
-                this.handlePlayerAction();
+                // Create countdown indicator
+                this.createMoveCountdownIndicator(event.clientX, event.clientY);
+                
+                // Start movement countdown
+                this.inputController.mouse.moveClickStart = this.clock.elapsedTime;
+                this.inputController.mouse.moveClickPosition = { x: event.clientX, y: event.clientY };
+                this.inputController.mouse.moveCountdown = 3; // 3 second countdown
             }
         });
         
         document.addEventListener('mouseup', (event) => {
             if (event.button === 0) { // Left click
-                this.inputController.mouse.isDown = false;
-                this.inputController.mouse.isDragging = false;
+                // If mouseup happens quickly (before countdown), handle action immediately
+                if (this.inputController.mouse.moveCountdown > 0 && 
+                    this.clock.elapsedTime - this.inputController.mouse.moveClickStart < 0.3) {
+                    
+                    this.inputController.mouse.isDown = true;
+                    this.inputController.mouse.isDragging = true;
+                    this.inputController.mouse.movementTarget = this.getMouseWorldPosition();
+                    this.handlePlayerAction();
+                    
+                    // Reset countdown
+                    this.inputController.mouse.moveCountdown = 0;
+                    
+                    // Remove countdown indicator
+                    const indicator = document.getElementById('move-countdown-indicator');
+                    if (indicator) {
+                        document.body.removeChild(indicator);
+                    }
+                }
             }
         });
         
@@ -257,6 +297,32 @@ class BrowserDayZ {
                 // this.renderer.domElement.requestPointerLock();
             }
         });
+    }
+
+    createMoveCountdownIndicator(x, y) {
+        // Remove existing indicator if it exists
+        const existingIndicator = document.getElementById('move-countdown-indicator');
+        if (existingIndicator) {
+            document.body.removeChild(existingIndicator);
+        }
+        
+        // Create new indicator
+        const indicator = document.createElement('div');
+        indicator.id = 'move-countdown-indicator';
+        indicator.style.position = 'absolute';
+        indicator.style.left = `${x}px`;
+        indicator.style.top = `${y}px`;
+        indicator.style.transform = 'translate(-50%, -50%)';
+        indicator.style.color = 'white';
+        indicator.style.fontSize = '24px';
+        indicator.style.fontWeight = 'bold';
+        indicator.style.textShadow = '0 0 3px black';
+        indicator.style.zIndex = '1000';
+        indicator.style.userSelect = 'none';
+        indicator.style.pointerEvents = 'none';
+        indicator.innerText = '3';
+        
+        document.body.appendChild(indicator);
     }
 
     setupMultiplayer() {
@@ -1504,6 +1570,40 @@ class BrowserDayZ {
         return target;
     }
 
+    updateMoveCountdown(deltaTime) {
+        if (this.inputController.mouse.moveCountdown > 0) {
+            // Update countdown based on elapsed time
+            const elapsedTime = this.clock.elapsedTime - this.inputController.mouse.moveClickStart;
+            const remainingTime = 3 - elapsedTime;
+            
+            // Update the countdown display
+            const indicator = document.getElementById('move-countdown-indicator');
+            if (indicator) {
+                // Display current countdown number (3, 2, 1)
+                const countdownValue = Math.ceil(remainingTime);
+                indicator.innerText = countdownValue > 0 ? countdownValue.toString() : '';
+            }
+            
+            // Check if countdown is complete
+            if (remainingTime <= 0) {
+                // Initiate movement
+                this.inputController.mouse.isDown = true;
+                this.inputController.mouse.isDragging = true;
+                this.inputController.mouse.movementTarget = this.getMouseWorldPosition();
+                
+                // Reset countdown
+                this.inputController.mouse.moveCountdown = 0;
+                this.inputController.mouse.moveClickStart = null;
+                this.inputController.mouse.moveClickPosition = null;
+                
+                // Remove indicator
+                if (indicator) {
+                    document.body.removeChild(indicator);
+                }
+            }
+        }
+    }
+
     animate() {
         requestAnimationFrame(this.animate.bind(this));
         
@@ -1512,6 +1612,9 @@ class BrowserDayZ {
         const deltaTime = Math.min(this.clock.getDelta(), 0.1);
         
         if (!this.gameState.isPaused) {
+            // Update movement countdown
+            this.updateMoveCountdown(deltaTime);
+            
             // Update player movement
             this.handlePlayerMovement(deltaTime);
             
